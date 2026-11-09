@@ -17,6 +17,9 @@ const FOOD_PRIORITY = [
   'melon_slice',
   'beetroot',
   'golden_carrot',
+  // Emergency-only fallback. It is edible but can apply Hunger, so it stays
+  // below all normal food and is selected only when hunger is critical.
+  'rotten_flesh',
 ];
 
 const HOSTILE_MOBS = new Set([
@@ -102,6 +105,7 @@ export class SurvivalController {
     this.lastAlerts = new Map();
     this.lastDefenseAt = 0;
     this.lastEmergencyAt = 0;
+    this.previousHealth = null;
     this.onDeath = () => this.handleDeath();
     this.onRespawn = () => this.emit(`${this.bot.username} respawned; survival monitoring resumed.`);
   }
@@ -126,6 +130,15 @@ export class SurvivalController {
     this.bot.pathfinder?.setGoal(null);
     this.taskExecutor?.cancelCurrent?.();
     this.emit(`${this.bot.username} died; cancelled active work and waiting for respawn recovery.`);
+  }
+
+  isSurvivalRecoveryActive() {
+    const task = this.taskExecutor?.activeTask;
+    return Boolean(task && task.issuerName === 'Survival' && /^(escape danger|defend nearby threats)$/.test(String(task.instruction).trim().toLowerCase()));
+  }
+
+  interruptOrdinaryWork() {
+    if (!this.isSurvivalRecoveryActive()) this.taskExecutor?.cancelCurrent?.();
   }
 
   snapshot() {
@@ -163,9 +176,10 @@ export class SurvivalController {
     try {
       const state = this.snapshot();
       this.monitorThreats(state);
+      this.previousHealth = state.health;
       if (state.health != null && state.health <= this.criticalHealth) {
         this.bot.pathfinder?.setGoal(null);
-        this.taskExecutor?.cancelCurrent?.();
+        this.interruptOrdinaryWork();
         this.dispatchEmergency('escape danger', 'critical health');
         this.emitThrottled(
           'critical-health',
@@ -227,16 +241,22 @@ export class SurvivalController {
       'nearby-hostile',
       `${this.bot.username} detected nearby hostile mob ${nearest.name} (${nearest.distance} blocks).`,
     );
-    const emergencyRange = nearest.name === 'creeper' ? 10 : 6;
-    if (nearest.distance <= emergencyRange) {
+    const emergencyRange = nearest.name === 'creeper' ? 4 : 4;
+    const entity = Object.values(this.bot.entities ?? {})
+      .filter((candidate) => candidate.name === nearest.name && candidate.position)
+      .sort((a, b) => distanceBetween(this.bot.entity?.position, a.position) - distanceBetween(this.bot.entity?.position, b.position))[0];
+    const recentlyDamaged = this.previousHealth != null && state.health != null && state.health < this.previousHealth;
+    const targetingBot = entity && ((entity.target && (entity.target === this.bot.entity || (this.bot.entity?.id != null && entity.target.id === this.bot.entity.id))) || (entity.metadata?.target != null && entity.metadata.target === this.bot.entity?.id));
+    const activeAttack = recentlyDamaged || targetingBot || nearest.distance <= emergencyRange;
+    if (activeAttack) {
       this.bot.pathfinder?.setGoal(null);
-      this.taskExecutor?.cancelCurrent?.();
-      // Any hostile inside the emergency range gets an immediate escape.
-      // Combat/guard planning can happen only after the bot reaches safety.
+      this.interruptOrdinaryWork();
+      // Proximity alone is not an attack. Preempt only on verified damage,
+      // a mob targeting the bot, or a genuinely immediate creeper/melee threat.
       this.dispatchEmergency('escape danger', `${nearest.name} at ${nearest.distance} blocks`);
       this.emitThrottled('combat-preemption', `${this.bot.username} stopped its current task because ${nearest.name} is dangerously close.`);
     }
-    if (this.taskExecutor && !this.taskExecutor.activeTask && !(this.taskExecutor.queue?.length) && this.now() - this.lastDefenseAt >= this.alertCooldownMs) {
+    if (activeAttack && this.taskExecutor && !this.taskExecutor.activeTask && !(this.taskExecutor.queue?.length) && this.now() - this.lastDefenseAt >= this.alertCooldownMs) {
       this.lastDefenseAt = this.now();
       void this.taskExecutor.submitCommand('defend nearby threats', 20, 'Survival').catch((error) => {
         logger.warn({ err: error, username: this.bot.username }, 'Automatic survival defense dispatch failed');
@@ -257,7 +277,8 @@ export class SurvivalController {
   selectFood(hunger) {
     const available = this.bot.inventory.items()
       .filter((item) => FOOD_ORDER.has(item.name))
-      .filter((item) => item.name !== 'golden_carrot' || hunger <= 6);
+      .filter((item) => item.name !== 'golden_carrot' || hunger <= 6)
+      .filter((item) => item.name !== 'rotten_flesh' || hunger <= 6);
     return available.sort((first, second) => FOOD_ORDER.get(first.name) - FOOD_ORDER.get(second.name))[0];
   }
 

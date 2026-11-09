@@ -12,7 +12,10 @@ export const ACCEPTANCE_INSTRUCTION = 'run the clean world survival bootstrap ac
  * fabricates world state.
  */
 export async function runLiveAcceptance({ minecraft = defaultConfig.minecraft, timeoutMs = 30 * 60 * 1000 } = {}) {
-  const definition = minecraft.bots?.[0] ?? minecraft
+  if (process.env.LIVE_TESTS !== '1') throw new Error('Live tests require LIVE_TESTS=1')
+  const configuredDefinition = minecraft.bots?.[0] ?? minecraft
+  const definition = { ...configuredDefinition, username: process.env.LIVE_TEST_USERNAME ?? `Test_${Date.now().toString(36).slice(-6)}` }
+  if (definition?.username === 'newbee') throw new Error('Live tests refuse the production username newbee')
   if (!definition?.host || !definition?.port || !definition?.username) {
     throw new Error('Minecraft host, port, and username are required for live acceptance')
   }

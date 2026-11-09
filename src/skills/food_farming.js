@@ -17,6 +17,7 @@ const EDIBLE_FOODS = [
   'cooked_beef', 'cooked_porkchop', 'cooked_mutton', 'cooked_chicken',
   'cooked_rabbit', 'cooked_salmon', 'cooked_cod', 'bread', 'baked_potato',
   'golden_carrot', 'carrot', 'apple', 'sweet_berries', 'melon_slice',
+  'rotten_flesh',
 ]
 
 const RAW_FOODS = ['raw_beef', 'raw_porkchop', 'raw_mutton', 'raw_chicken', 'raw_rabbit', 'raw_cod', 'raw_salmon', 'potato']
@@ -150,7 +151,7 @@ skillRegistry.register({
     }
 
     if (!foodItem) {
-      for (const name of EDIBLE_FOODS) {
+      for (const name of [...EDIBLE_FOODS, ...RAW_FOODS]) {
         foodItem = items.find(i => i.name === name)
         if (foodItem) break
       }
@@ -161,9 +162,16 @@ skillRegistry.register({
     }
 
     const foodBefore = bot.food ?? 0
+    if (foodBefore >= 20) return { success: true, skipped: true, reason: 'HUNGER_FULL', foodBefore, foodAfter: foodBefore }
+    const countBefore = items.filter((item) => item.name === foodItem.name).reduce((sum, item) => sum + item.count, 0)
     await bot.equip(foodItem, 'hand')
     await bot.consume()
     const foodAfter = bot.food ?? 0
+    const countAfter = bot.inventory.items().filter((item) => item.name === foodItem.name).reduce((sum, item) => sum + item.count, 0)
+
+    if (foodAfter <= foodBefore && countAfter >= countBefore) {
+      return { success: false, error: `EATING_NOT_VERIFIED: ${foodItem.name} was not consumed`, foodBefore, foodAfter, countBefore, countAfter }
+    }
 
     return {
       success: true,
@@ -171,7 +179,51 @@ skillRegistry.register({
       foodBefore,
       foodAfter,
       replenished: foodAfter - foodBefore,
+      consumed: countBefore - countAfter,
     }
+  },
+})
+
+// Deterministic survival chain used by "find food". It never stops after an
+// inventory miss: each fallback changes strategy and records what ran.
+skillRegistry.register({
+  id: 'survive_food',
+  name: 'Find, Gather, and Eat Food',
+  category: 'food_farming',
+  description: 'Eat inventory food, harvest crops, hunt animals, cook, then eat',
+  arguments: { maxDistance: { type: 'number', required: false, default: 64 } },
+  requires: [], permissions: ['*'], timeout: 120000,
+  async execute(bot, args, context) {
+    const strategies = []
+    const eat = skillRegistry.get('eat_food')
+    const harvest = skillRegistry.get('harvest_crops')
+    const hunt = skillRegistry.get('hunt_animal')
+    const cook = skillRegistry.get('cook_food')
+    const before = bot.food ?? 20
+    const tryEat = async () => {
+      const result = await eat.execute(bot, {}, context)
+      strategies.push({ name: 'eat_inventory', ok: result.success })
+      return result.success
+    }
+    if (await tryEat()) return { success: true, strategy: strategies, foodBefore: before, foodAfter: bot.food ?? before }
+
+    for (const cropType of ['potatoes', 'carrots', 'wheat', 'beetroots']) {
+      const result = await harvest.execute(bot, { cropType, maxCount: 8, replant: true }, context)
+      strategies.push({ name: `harvest_${cropType}`, ok: result.harvested > 0 })
+      if (result.harvested > 0 && await tryEat()) return { success: true, strategy: strategies, foodBefore: before, foodAfter: bot.food ?? before }
+    }
+
+    for (const animal of ['cow', 'pig', 'sheep', 'chicken']) {
+      const result = await hunt.execute(bot, { animal, quantity: 1 }, context)
+      strategies.push({ name: `hunt_${animal}`, ok: result.hunted > 0 })
+      if (result.hunted > 0) {
+        const cooked = await cook.execute(bot, { quantity: 4 }, context)
+        strategies.push({ name: 'cook_food', ok: cooked.success })
+        if (await tryEat()) return { success: true, strategy: strategies, foodBefore: before, foodAfter: bot.food ?? before }
+      }
+    }
+
+    return { success: false, error: 'No food found after inventory, crops, animals, and cooking strategies', strategy: strategies, state: { food: bot.food ?? before, position: bot.entity?.position ?? null } }
   },
 })
 

@@ -15,7 +15,7 @@ const { GoalBlock, GoalFollow, GoalNear, GoalXZ, GoalGetToBlock } = goals
  * @param {string}                  skillId    The skill being executed (for logging).
  * @returns {SkillContext}
  */
-export function createSkillContext(bot, skillId) {
+export function createSkillContext(bot, skillId, signal = null) {
   const mcData = minecraftData(bot.version)
   const log = logger.child({ component: 'Skill', skillId })
   const movements = new Movements(bot, mcData)
@@ -23,6 +23,7 @@ export function createSkillContext(bot, skillId) {
   return {
     // ---- Core references ----
     bot,
+    signal,
     mcData,
     log,
     logger: log,

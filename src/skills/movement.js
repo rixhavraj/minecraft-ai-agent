@@ -127,60 +127,41 @@ skillRegistry.register({
     const { logger } = context
     const { x, y, z } = args
 
+    if (![x, y, z].every(Number.isFinite)) {
+      const error = new Error('Destination coordinates must be finite numbers')
+      error.code = 'NAVIGATION_ERROR'
+      throw error
+    }
+    if (!bot.entity?.position || !bot.pathfinder) {
+      const error = new Error('Navigation unavailable: bot position or pathfinder is missing')
+      error.code = 'NAVIGATION_ERROR'
+      throw error
+    }
+
+    const distanceToTarget = () => bot.entity.position.distanceTo({ x, y, z })
+    if (distanceToTarget() <= 3) return { success: true, status: 'REACHED', verified: true, finalPosition: { ...bot.entity.position }, distanceFromTarget: distanceToTarget() }
+
     const movements = new Movements(bot, context?.mcData || minecraftData(bot.version))
     bot.pathfinder.setMovements(movements)
-
-    const goal = new GoalBlock(x, y, z)
-    bot.pathfinder.setGoal(goal)
-
-    logger.info({ x, y, z }, 'Navigating to position')
-
-    // Wait for arrival or timeout
-    await new Promise((resolve, reject) => {
-      const onArrived = () => {
-        cleanup()
-        resolve()
-      }
-      const onPathStopped = () => {
-        cleanup()
-        resolve()
-      }
-      const onBotEnd = () => {
-        cleanup()
-        reject(new Error('Minecraft bot disconnected during navigation'))
-      }
-      const onNoPath = (results) => {
-        cleanup()
-        reject(new Error(`No path found: ${results?.reason ?? 'unknown'}`))
-      }
-      const cleanup = () => {
-        bot.removeListener('goal_reached', onArrived)
-        bot.removeListener('path_stop', onPathStopped)
-        bot.removeListener('path_update', onNoPath)
-        bot.removeListener('end', onBotEnd)
-      }
-
-      bot.on('goal_reached', onArrived)
-      bot.on('path_stop', onPathStopped)
-      bot.on('end', onBotEnd)
-
-      // Also handle no-path scenario
-      bot.on('path_update', (results) => {
-        if (results.status === 'noPath') {
-          onNoPath(results)
-        }
-      })
+    const attempt = async (goal, attemptNumber) => new Promise((resolve, reject) => {
+      let settled = false; let lastDistance = distanceToTarget(); let lastProgressAt = Date.now()
+      const finish = (outcome, error = null) => { if (settled) return; settled = true; clearTimeout(timer); clearInterval(progressTimer); bot.removeListener('goal_reached', onArrived); bot.removeListener('path_stop', onPathStopped); bot.removeListener('path_update', onPathUpdate); bot.removeListener('end', onEnd); context.signal?.removeEventListener('abort', onAbort); bot.pathfinder.setGoal(null); error ? reject(Object.assign(new Error(error.message), { code: error.code })) : resolve(outcome) }
+      const onArrived = () => { const distance=distanceToTarget(); if(distance<=3) finish({status:'REACHED',distance}); else finish(null,Object.assign(new Error(`Goal reached but destination is ${distance.toFixed(1)} blocks away`),{code:'NAVIGATION_VERIFICATION'})) }
+      const onPathStopped = () => { if(distanceToTarget()>3) finish(null,Object.assign(new Error('Pathfinder stopped before reaching destination'),{code:'NAVIGATION_STUCK'})) }
+      const onPathUpdate = (result) => { if(result?.status==='noPath') finish(null,Object.assign(new Error(`No path found: ${result.reason??'unknown'}`),{code:'NAVIGATION_UNREACHABLE'})) }
+      const onEnd = () => finish(null,Object.assign(new Error('Minecraft bot disconnected during navigation'),{code:'NAVIGATION_ERROR'}))
+      const onAbort = () => finish(null,Object.assign(new Error('Navigation cancelled'),{code:'NAVIGATION_CANCELLED'}))
+      const timer=setTimeout(()=>finish(null,Object.assign(new Error(`Navigation timed out at ${distanceToTarget().toFixed(1)} blocks from destination`),{code:'NAVIGATION_TIMEOUT'})),45_000)
+      const progressTimer=setInterval(()=>{const distance=distanceToTarget(); if(distance<lastDistance-0.5){lastDistance=distance;lastProgressAt=Date.now();logger.info({x,y,z,distance,attempt:attemptNumber},'Navigation progress')} else if(Date.now()-lastProgressAt>12_000){finish(null,Object.assign(new Error(`Navigation stuck with no progress; distance ${distance.toFixed(1)}`),{code:'NAVIGATION_STUCK'}))}},1000)
+      bot.on('goal_reached',onArrived); bot.on('path_stop',onPathStopped); bot.on('path_update',onPathUpdate); bot.once('end',onEnd); context.signal?.addEventListener('abort',onAbort,{once:true}); bot.pathfinder.setGoal(goal)
+      logger.info({x,y,z,attempt:attemptNumber,distance:lastDistance},'Navigation attempt started')
     })
-
-    const finalPos = bot.entity.position
-    const dist = finalPos.distanceTo({ x, y, z })
-
-    logger.info({ arrived: { x: finalPos.x, y: finalPos.y, z: finalPos.z }, distanceFromTarget: dist }, 'Navigation complete')
-    return {
-      success: true,
-      message: `Arrived near (${x}, ${y}, ${z})`,
-      finalPosition: { x: finalPos.x, y: finalPos.y, z: finalPos.z },
-      distanceFromTarget: dist,
+    try { return { success:true, ...(await attempt(new GoalBlock(x,y,z),1)), verified:true, message:`Arrived near (${x}, ${y}, ${z})`, finalPosition:{...bot.entity.position}, distanceFromTarget:distanceToTarget() } }
+    catch (firstError) {
+      if (['NAVIGATION_CANCELLED','NAVIGATION_ERROR'].includes(firstError.code)) throw firstError
+      logger.warn({x,y,z,firstFailure:firstError.code},'Navigation first route failed; trying GoalNear alternative')
+      try { return { success:true, ...(await attempt(new context.GoalNear(x,y,z,2),2)), verified:true, message:`Arrived near (${x}, ${y}, ${z})`, finalPosition:{...bot.entity.position}, distanceFromTarget:distanceToTarget() } }
+      catch (secondError) { logger.error({x,y,z,firstFailure:firstError.code,secondFailure:secondError.code,distance:distanceToTarget()},'Navigation failed after bounded alternatives'); throw secondError }
     }
   },
 

@@ -1,0 +1,1 @@
+export function formatUnderstanding(plan) { return { understood:plan.summary, intents:plan.intent, objectives:plan.objectives.length, clarificationRequired:plan.clarification_required, confidence:plan.confidence } }

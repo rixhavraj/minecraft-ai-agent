@@ -139,6 +139,15 @@ test('dispatches one cooldown-gated defense task for a nearby hostile', async ()
   assert.deepEqual(calls[0], ['defend nearby threats', 20, 'Survival']);
 });
 
+test('does not preempt ordinary work for a hostile that is only nearby', async () => {
+  let cancelled = 0;
+  const bot = createBot({ entities: { zombie: { type: 'mob', name: 'zombie', position: { x: 5, y: 64, z: 0 } } } });
+  const controller = new SurvivalController(bot, { taskExecutor: { activeTask: { id: 'coordinate-task' }, cancelCurrent: () => { cancelled += 1; }, submitCommand: async () => ({ id: 'escape-task' }) }, now: () => 1000 });
+  await controller.tick();
+  assert.equal(cancelled, 0);
+  assert.equal(bot.pathfinder.goals.length, 0);
+});
+
 test('preempts active work when a hostile is dangerously close', async () => {
   let cancelled = 0;
   const bot = createBot({
@@ -166,4 +175,19 @@ test('critical health dispatches a real escape task after cancelling work', asyn
   });
   await controller.tick();
   assert.deepEqual(calls, [['cancel'], ['escape danger', 100, 'Survival']]);
+});
+
+test('does not cancel its own active escape recovery on the next survival tick', async () => {
+  let cancelled = 0;
+  const bot = createBot({ health: 4, food: 20 });
+  const controller = new SurvivalController(bot, {
+    taskExecutor: {
+      activeTask: { issuerName: 'Survival', instruction: 'escape danger' },
+      cancelCurrent: () => { cancelled += 1; },
+      submitCommand: async () => ({ id: 'escape-task' }),
+    },
+    now: () => 40_000,
+  });
+  await controller.tick();
+  assert.equal(cancelled, 0);
 });

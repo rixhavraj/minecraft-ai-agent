@@ -127,7 +127,7 @@ class SkillExecutor extends EventEmitter {
       memoryStore.updateAction(actionId, 'CANCELLED', { error: 'Skill execution cancelled' })
       return this._failure(skillId, 'Skill execution cancelled', 0, 0, 'CANCELLED')
     }
-    const context = createSkillContext(bot, skillId)
+    const context = createSkillContext(bot, skillId, options.signal)
     const mutex = this._getMutex(bot)
 
     let lastError = null
@@ -278,6 +278,8 @@ class SkillExecutor extends EventEmitter {
   }
 
   _classifyFailure(error) {
+    if (/TOOL_REQUIREMENT_FAILURE/i.test(error?.message ?? '')) return 'TOOL_REQUIREMENT_FAILURE'
+    if (error?.code?.startsWith('NAVIGATION_')) return error.code
     if (error?.code === 'VERIFY_FAILED') return 'VERIFICATION_FAILED'
     if (/timed out/i.test(error?.message ?? '')) return 'TIMEOUT'
     if (/missing|no .*found|insufficient|needs/i.test(error?.message ?? '')) return 'MISSING_RESOURCE'

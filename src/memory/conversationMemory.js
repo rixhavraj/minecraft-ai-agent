@@ -1,0 +1,1 @@
+export class ConversationMemory { constructor({ limit = 20 } = {}) { this.limit=limit; this.items=[] } add(message, parsed=null) { this.items.push({ instruction: message, parsed, at: new Date().toISOString() }); if(this.items.length>this.limit)this.items.shift() } recent() { return [...this.items] } }

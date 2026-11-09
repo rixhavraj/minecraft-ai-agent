@@ -20,9 +20,9 @@ export function createMinecraftBot(config, onChat) {
   });
   bot.once('spawn', () => logger.info({ username: config.username, host: config.host, port: config.port }, 'Commander joined Minecraft'));
   bot.on('chat', (username, message) => { if (username !== bot.username) void onChat(username, message, bot); });
-  bot.on('kicked', (reason) => logger.warn({ reason }, 'Minecraft bot was kicked'));
-  bot.on('error', (error) => logger.error({ err: error }, 'Minecraft bot error'));
-  bot.on('end', () => logger.warn('Minecraft bot disconnected'));
+  bot.on('kicked', (reason) => logger.warn({ username: config.username, reason, reasonType: typeof reason, stack: reason?.stack }, 'Minecraft bot was kicked'));
+  bot.on('error', (error) => logger.error({ username: config.username, err: error, stack: error?.stack }, 'Minecraft bot error'));
+  bot.on('end', (reason) => logger.warn({ username: config.username, reason, pid: process.pid }, 'Minecraft bot disconnected'));
   return bot;
 }
 

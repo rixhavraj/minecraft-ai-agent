@@ -68,7 +68,7 @@ export class NPCBehaviourController {
     const inventoryCount = this.bot.inventory?.items?.().reduce((total, item) => total + item.count, 0) ?? 0
     if (health <= 8) return { state: 'survival', activity: 'emergency survival', instruction: 'escape danger' }
     if (hunger <= 10) return { state: 'survival', activity: 'food management', instruction: 'find food and eat' }
-    if (inventoryCount === 0) return { state: 'working', activity: 'survival bootstrap', instruction: 'run the survival bootstrap and establish a safe base' }
+    if (this.bot.inventory?.items && inventoryCount === 0) return { state: 'working', activity: 'survival bootstrap', instruction: 'run the survival bootstrap and establish a safe base' }
     if (time >= 12000 && time <= 23000) return { state: 'night', activity: 'finding bed and setting spawn', instruction: 'find a bed and sleep to set spawn point' }
     const activities = {
       farmer: 'inspect the farm and harvest mature crops', miner: 'collect useful nearby resources for survival', builder: 'inspect the home and plan maintenance', explorer: 'collect useful nearby resources for survival',

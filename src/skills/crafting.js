@@ -9,9 +9,107 @@ import { skillRegistry } from './registry.js'
 import { logger } from '../utils/logger.js'
 import pathfinderPackage from 'mineflayer-pathfinder'
 import { Vec3 } from 'vec3'
+import { rememberRecipe, normalizeItemName } from '../intelligence/crafting/index.js'
 
 const { goals: { GoalGetToBlock, GoalNear } } = pathfinderPackage
 const log = logger.child({ component: 'CraftingSkills' })
+
+const TOOL_NAMES = /_(?:pickaxe|axe|sword|shovel|hoe)$/
+
+function inventoryCount(bot, itemName) {
+  return bot.inventory.items()
+    .filter((item) => item.name === itemName)
+    .reduce((total, item) => total + item.count, 0)
+}
+
+function itemNameFromId(mcData, id) {
+  return mcData.items?.[id]?.name ?? Object.values(mcData.itemsByName ?? {}).find((item) => item.id === id)?.name ?? null
+}
+
+function recipeIngredients(recipe, mcData) {
+  const grouped = new Map()
+  for (const ingredient of recipe?.ingredients ?? []) {
+    const name = itemNameFromId(mcData, ingredient.id)
+    if (!name) continue
+    grouped.set(name, (grouped.get(name) ?? 0) + (ingredient.count ?? 1))
+  }
+  return [...grouped.entries()].map(([name, count]) => ({ name, count }))
+}
+
+function failure(code, message, extra = {}) {
+  return { success: false, error: `${code}: ${message}`, failureClass: code, ...extra }
+}
+
+/**
+ * Recursively satisfy a real Mineflayer recipe's ingredients. This deliberately
+ * uses recipesFor instead of a hand-written recipe table, so it follows the
+ * connected server's Minecraft version and detects impossible/circular plans.
+ */
+async function ensureRecipeIngredients(bot, mcData, itemName, quantity, stack = [], depth = 0) {
+  if (depth > 12 || stack.includes(itemName)) {
+    return failure('RECIPE_UNAVAILABLE', `Circular or excessively deep recipe dependency: ${[...stack, itemName].join(' -> ')}`)
+  }
+
+  const missing = Math.max(0, quantity - inventoryCount(bot, itemName))
+  if (missing === 0) return { success: true, itemName, quantity: 0, alreadyAvailable: true }
+
+  const itemDef = mcData.itemsByName[itemName]
+  if (!itemDef) return failure('INVALID_ITEM', `Unknown Minecraft item '${itemName}'`)
+
+  let recipe = bot.recipesFor(itemDef.id, null, 1, null)?.[0] ?? null
+  let table = null
+  if (!recipe) {
+    table = await getOrPlaceCraftingTable(bot, mcData)
+    if (!table) return failure('MISSING_CRAFTING_TABLE', `No accessible crafting table for '${itemName}'`)
+    recipe = bot.recipesFor(itemDef.id, null, 1, table)?.[0] ?? null
+  }
+  if (!recipe) return failure('RECIPE_UNAVAILABLE', `No recipe available for '${itemName}'`)
+
+  const ingredients = recipeIngredients(recipe, mcData)
+  if (ingredients.length === 0) return failure('RECIPE_UNAVAILABLE', `Recipe for '${itemName}' has no readable ingredients`)
+
+  const outputPerBatch = recipe.result?.count ?? 1
+  const batches = Math.max(1, Math.ceil(missing / outputPerBatch))
+  for (const ingredient of ingredients) {
+    const needed = ingredient.count * batches
+    const result = await ensureRecipeIngredients(bot, mcData, ingredient.name, needed, [...stack, itemName], depth + 1)
+    if (!result.success) return result
+  }
+
+  return { success: true, itemName, recipe, table, batches, ingredients }
+}
+
+async function craftWithPrerequisites(bot, mcData, itemName, quantity) {
+  const before = inventoryCount(bot, itemName)
+  if (before >= quantity) return { success: true, itemName, crafted: 0, existing: before, skipped: true }
+
+  const prepared = await ensureRecipeIngredients(bot, mcData, itemName, quantity)
+  if (!prepared.success) return prepared
+
+  let recipe = prepared.recipe
+  let table = prepared.table
+  if (!recipe) {
+    const itemDef = mcData.itemsByName[itemName]
+    recipe = bot.recipesFor(itemDef.id, null, 1, null)?.[0] ?? null
+  }
+  if (!recipe) return failure('RECIPE_UNAVAILABLE', `Recipe disappeared for '${itemName}'`)
+
+  try {
+    if (table && bot.pathfinder?.setGoal) {
+      bot.pathfinder.setGoal(new GoalGetToBlock(table.position.x, table.position.y, table.position.z))
+      await new Promise((resolve) => setTimeout(resolve, 800))
+    }
+    await bot.craft(recipe, prepared.batches ?? quantity, table)
+  } catch (error) {
+    return failure('CRAFTING_FAILED', error.message, { itemName })
+  }
+
+  const after = inventoryCount(bot, itemName)
+  if (after < quantity || after <= before) {
+    return failure('CRAFTING_FAILED', `Crafted '${itemName}' was not verified in inventory`, { itemName, before, after, required: quantity })
+  }
+  return { success: true, itemName, crafted: after - before, quantity: after, usedCraftingTable: Boolean(table) }
+}
 
 // ─── Helper: Ensure or Place Crafting Table ──────────────────────────────────
 async function getOrPlaceCraftingTable(bot, mcData) {
@@ -268,70 +366,35 @@ skillRegistry.register({
       return { success: true, verified: true, crafted: rawName, quantity: 0, existing: existingQuantity, skipped: true }
     }
 
-    // Auto-prepare sticks if needed for tools
-    if (rawName.includes('_axe') || rawName.includes('_pickaxe') || rawName.includes('_sword') || rawName.includes('_shovel') || rawName.includes('_hoe')) {
-      const sticks = bot.inventory.items().filter(i => i.name === 'stick').reduce((acc, i) => acc + i.count, 0)
-      if (sticks < 2) {
-        // Auto-craft planks from logs if 0 planks
-        let planks = bot.inventory.items().find(i => i.name.endsWith('_planks'))
-        if (!planks) {
-          const logs = bot.inventory.items().find(i => i.name.endsWith('_log') || i.name.endsWith('_wood'))
-          if (logs) {
-            const pDef = context.mcData.itemsByName[logs.name.replace(/_log|_wood/, '_planks')]
-            if (pDef) {
-              const pRec = bot.recipesFor(pDef.id, null, 1, null)
-              if (pRec?.[0]) await bot.craft(pRec[0], 1, null)
-            }
-          }
-        }
-        // Craft sticks
-        const stickDef = context.mcData.itemsByName['stick']
-        if (stickDef) {
-          const sRec = bot.recipesFor(stickDef.id, null, 1, null)
-          if (sRec?.[0]) await bot.craft(sRec[0], 1, null)
-        }
-      }
-    }
-
-    // Check recipes without table first
-    let recipes = bot.recipesFor(itemDef.id, null, 1, null)
-    let craftingTableBlock = null
-
-    if (!recipes || recipes.length === 0) {
-      // Try with crafting table
-      craftingTableBlock = await getOrPlaceCraftingTable(bot, context.mcData)
-      if (craftingTableBlock) {
-        bot.pathfinder.setGoal(new GoalGetToBlock(craftingTableBlock.position.x, craftingTableBlock.position.y, craftingTableBlock.position.z))
-        await new Promise(r => setTimeout(r, 1200))
-        recipes = bot.recipesFor(itemDef.id, null, 1, craftingTableBlock)
-      }
-    }
-
-    if (!recipes || recipes.length === 0) {
-      return {
-        success: false,
-        error: `Missing materials to craft '${rawName}'. Needs wood or stone.`,
-      }
-    }
-
-    const qty = requestedQuantity
-    await bot.craft(recipes[0], qty, craftingTableBlock)
+    const crafted = await craftWithPrerequisites(bot, context.mcData, rawName, requestedQuantity)
+    if (!crafted.success) return crafted
 
     // Auto-equip if it's a tool or weapon
     const craftedItem = bot.inventory.items().find(i => i.name === rawName)
     if (craftedItem) {
       try {
         await bot.equip(craftedItem, 'hand')
-      } catch {
-        // ignore equip error
+      } catch (error) {
+        return failure('EQUIPMENT_FAILED', `Crafted '${rawName}' but could not equip it: ${error.message}`, { itemName: rawName })
       }
     }
+
+    if ((rawName.includes('_pickaxe') || rawName.includes('_axe') || rawName.includes('_shovel')) && bot.heldItem?.name !== rawName) {
+      return failure('EQUIPMENT_FAILED', `Crafted '${rawName}' but equipment verification failed`, { heldItem: bot.heldItem?.name ?? null })
+    }
+
+    rememberRecipe({
+      output: normalizeItemName(rawName),
+      quantity: crafted.quantity ?? requestedQuantity,
+      station: crafted.usedCraftingTable ? 'crafting_table' : 'inventory',
+      verified: true,
+    }, { verified: true, source: 'mineflayer-verified-craft' })
 
     return {
       success: true,
       crafted: rawName,
-      quantity: qty,
-      usedCraftingTable: craftingTableBlock !== null,
+      quantity: crafted.quantity ?? requestedQuantity,
+      usedCraftingTable: crafted.usedCraftingTable ?? false,
     }
   },
 })

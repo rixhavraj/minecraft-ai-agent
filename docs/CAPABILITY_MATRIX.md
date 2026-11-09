@@ -13,7 +13,7 @@ Status is based on repository evidence and automated tests, not on function name
 | 7 Mining | PARTIALLY IMPLEMENTED | Ore/vein/strip skills exist; no proven route-resume/full integration. |
 | 8 Crafting/smelting | PARTIALLY IMPLEMENTED | Recipe-backed Mineflayer crafting exists; broad recipe/equipment coverage is unverified. |
 | 9 Food/farming | PARTIALLY IMPLEMENTED | Food/crop/hunt/cook skills exist; sustainable farm integration is unverified. |
-| 10 Survival | PARTIALLY IMPLEMENTED | Monitoring, food, shelter and escape skills exist; controller still reports combat/evasion gap. |
+| 10 Survival | PARTIALLY IMPLEMENTED | Monitoring, food, shelter and escape skills exist; `find_and_sleep` has explicit failure states but live night/bed verification is UNVERIFIED. |
 | 11 Inventory/storage | PARTIALLY IMPLEMENTED | Inventory/chest skills exist; no shared reservation ledger. |
 | 12 Building | PARTIALLY IMPLEMENTED | Blueprint-like structures exist; custom blueprint generation and full verification are incomplete. |
 | 13 Combat | IMPLEMENTED BUT UNVERIFIED | Attack/defense skills exist; no live-world combat evidence. |
@@ -31,12 +31,12 @@ Status is based on repository evidence and automated tests, not on function name
 | 25 Skill registry | COMPLETE AND TESTED | Registry metadata/dependency/resource checks pass; broad live skill coverage remains limited. |
 | 26 World/resource management | PARTIALLY IMPLEMENTED | Persistent world sessions, observations, reservations, actions, goals, and resource checks exist. |
 | 27 Safety/reliability | PARTIALLY IMPLEMENTED | Mutex, timeouts, retries, cancellation, emergency stop, reconnect supervisor, and restart recovery exist; long-run recovery unverified. |
-| 28 Compatibility | PARTIALLY IMPLEMENTED | Version is configurable; no capability probing/unsupported-feature reporting. |
-| 29 Testing | PARTIALLY IMPLEMENTED | 48 passing tests, live smoke harness, and guarded acceptance harness; no resettable live test world. |
+| 28 Compatibility | PARTIALLY IMPLEMENTED | Installed minecraft-data supports `26.1`, while `.env` requests `26.1.2`; compatibility decision remains open. |
+| 29 Testing | PARTIALLY IMPLEMENTED | `npm test`: 68 passed, 1 skipped; scenario harness added but setup channel is unconfigured and live sleep is UNVERIFIED. |
 | 30 Delivery docs/dashboard | PARTIALLY IMPLEMENTED | README, audit/checklist, and local dashboard API exist; no full web UI. |
 | 31 Execution rules | PARTIALLY IMPLEMENTED | Tests and persistence exist; major categories remain absent. |
 | 32 Acceptance scenario | NOT VERIFIED | Live smoke completed; clean-world acceptance correctly rejected non-empty inventory and needs a prepared Survival world. |
 
 ## Current verification boundary
 
-`npm.cmd test` passes 30 tests with one intentionally skipped MySQL integration test. No Minecraft server, Telegram bot, or live-world test was available during this audit; therefore no live capability is marked complete.
+`npm.cmd test` passes 68 tests with one intentionally skipped MySQL integration test. Live wood collection passed once after the Phase 2 repair; Phase 1 sleep was not verified because the live run was daytime and no setup command channel is configured.
