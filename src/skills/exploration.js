@@ -174,10 +174,10 @@ skillRegistry.register({
     const maxDist = args.maxDistance ?? 128
     const logNames = [
       'oak_log', 'birch_log', 'spruce_log', 'jungle_log',
-      'acacia_log', 'dark_oak_log', 'mangrove_log', 'cherry_log',
+      'acacia_log', 'dark_oak_log', 'mangrove_log', 'cherry_log', 'crimson_stem', 'warped_stem',
     ]
 
-    const targetLogs = args.woodType ? [args.woodType] : logNames
+    const targetLogs = args.woodType ? [args.woodType, ...logNames.filter((name) => name !== args.woodType)] : logNames
     let matchedPositions = []
 
     for (const name of targetLogs) {

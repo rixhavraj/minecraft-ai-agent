@@ -14,6 +14,10 @@ import { savedBaseCoordinates } from '../skills/world_management.js'
 import { logger } from '../utils/logger.js'
 import { goalManager } from '../tasks/goal_manager.js'
 import { BenchmarkRunner } from '../evaluation/benchmark.js'
+import { languageEngine } from '../nlp/languageEngine.js'
+import { IntelligenceOrchestrator } from '../intelligence/orchestrator.js'
+
+const intelligenceOrchestrator = new IntelligenceOrchestrator({ language: languageEngine, executor: taskExecutor })
 
 const log = logger.child({ component: 'CommandDispatcher' })
 
@@ -34,6 +38,16 @@ export async function dispatchCommand(inputMessage, { bot, telegram, username = 
   }
   if (bot && /\b(?:how much health|health|hunger|food level)\b/i.test(text) && !/find food|eat|gather/i.test(text)) {
     return `Verified vitals: health ${bot.health ?? 'unknown'}/20, hunger ${bot.food ?? 'unknown'}/20.`
+  }
+
+  // Simple conversational questions must never become Minecraft tasks. Keep
+  // these local and deterministic so they do not wait behind the executor.
+  if (/\b(?:do you|can you)\s+understand\s+(?:my|normal|natural)\s+(?:language|english)\b/i.test(text)
+    || /\bdo you understand\b/i.test(text)) {
+    return 'Yes. I understand normal conversational language and can turn clear Minecraft instructions into tasks. Ask me a question or tell me what you want done.'
+  }
+  if (/^(?:what can you do|what are your abilities|who are you)\??$/i.test(text.trim())) {
+    return 'I am Agent001, your Minecraft companion. I can answer verified world-state questions, gather resources, build, craft, explore, navigate, survive, and report progress.'
   }
 
   const professionMatch = text.match(/^(?:become|change[ \t]+(?:your[ \t]+)?profession[ \t]+to|work[ \t]+as)[ \t]+(?:a[ \t]+)?(farmer|miner|builder|explorer|lumberjack|fisherman|blacksmith|trader|guard|researcher)\b/i)
@@ -308,7 +322,10 @@ export async function dispatchCommand(inputMessage, { bot, telegram, username = 
   const naturalText = text.startsWith('/') ? text.slice(1) : text
 
   // Submit to autonomous task executor for full planning and execution
-  const task = await taskExecutor.submitCommand(naturalText, 1, username)
+  const explicitCoordinateCommand = /\b(?:go|goto|move|navigate)\s+to\s+[-+]?\d+(?:\.\d+)?\s+[-+]?\d+(?:\.\d+)?\s+[-+]?\d+(?:\.\d+)?/i.test(naturalText)
+  const scheduled = await intelligenceOrchestrator.interpretAndSchedule(naturalText, { priority: explicitCoordinateCommand ? 90 : 1, issuerName: username })
+  if (scheduled.status === 'clarification_required') return `I need one detail before scheduling this: ${scheduled.parsed.clarification_question}`
+  const { task } = scheduled
   if (bot) {
     return `On it: ${naturalText}`
   }

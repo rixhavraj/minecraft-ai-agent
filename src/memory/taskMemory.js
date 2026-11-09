@@ -1,0 +1,1 @@
+export class TaskMemory { constructor(store) { this.store=store } recent(limit=10) { return this.store?.getRecentTasks(limit) ?? [] } relevant(query, limit=5) { return this.store?.findRelevantLessons(query)?.slice(0,limit) ?? [] } }

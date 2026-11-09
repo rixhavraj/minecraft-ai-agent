@@ -1,0 +1,1 @@
+export class ExperienceMemory { constructor(store) { this.store=store } relevant(query) { return this.store?.retrieveExperiences({ query, limit: 5 }) ?? [] } record(result) { return this.store?.recordExperience(result) } }

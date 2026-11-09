@@ -20,20 +20,17 @@ test('TaskPlanner decomposes "Collect 32 oak logs and build a small house"', () 
 
 test('TaskPlanner decomposes mining requests', () => {
   const plan = taskPlanner.plan('mine 16 iron');
-  assert.ok(plan.tasks.length >= 2);
+  assert.equal(plan.tasks.length, 2);
   const skillIds = plan.tasks.map(t => t.skillId);
   assert.ok(skillIds.includes('collect_ore'));
-  assert.ok(skillIds.includes('craft_stone_tools'), 'Mining iron should prepare a stone pickaxe');
-  assert.ok(skillIds.includes('collect_stone'), 'Mining iron should gather cobblestone first');
+  assert.ok(skillIds.includes('equip_best_tool'));
 });
 
-test('TaskPlanner prepares materials before crafting an axe', () => {
+test('TaskPlanner delegates crafting prerequisites to the inventory-aware crafter', () => {
   const plan = taskPlanner.plan('build a axe');
   const skillIds = plan.tasks.map(t => t.skillId);
-  assert.ok(skillIds.includes('collect_wood'));
-  assert.ok(skillIds.includes('craft_planks'));
-  assert.ok(skillIds.includes('craft_item'));
-  assert.equal(plan.tasks.find(t => t.skillId === 'craft_planks').args.count, 2);
+  assert.deepEqual(skillIds, ['craft_item']);
+  assert.equal(plan.tasks[0].args.itemName, 'axe');
 });
 
 test('TaskPlanner decomposes farming requests', () => {

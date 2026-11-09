@@ -1,0 +1,1 @@
+export function buildTaskGraph(objectives) { return { nodes: objectives.map((o,i)=>({ ...o, id:o.id||`objective_${i+1}` })), edges: objectives.flatMap(o=>o.dependencies.map(d=>({ from:d,to:o.id }))) } }
