@@ -1,0 +1,6 @@
+import { EventEmitter } from 'node:events'
+
+export class ThreatDetectionController extends EventEmitter {
+  constructor(perception, { immediateRange = 6, dangerRange = 12, criticalHealth = 6 } = {}) { super(); this.perception = perception; this.immediateRange = immediateRange; this.dangerRange = dangerRange; this.criticalHealth = criticalHealth; this.state = this.evaluate(perception.state); perception.on('updated', ({ state }) => { const previous = this.state; this.state = this.evaluate(state); if (this.state.level !== previous.level || this.state.nearest?.id !== previous.nearest?.id) this.emit('threat', { state: this.state, previous }) }) }
+  evaluate(world) { const hostiles = world.hostiles ?? []; const nearest = hostiles.slice().sort((a, b) => a.distance - b.distance)[0]; const critical = world.health != null && world.health <= this.criticalHealth; const level = critical || hostiles.filter((h) => h.distance <= this.immediateRange).length > 1 ? 'CRITICAL' : nearest?.distance <= this.immediateRange ? 'HIGH' : nearest?.distance <= this.dangerRange ? 'MEDIUM' : nearest ? 'LOW' : 'SAFE'; return { level, nearest: nearest ?? null, count: hostiles.length, threats: hostiles, health: world.health, hunger: world.hunger, observedAt: world.observedAt } }
+}

@@ -1,0 +1,25 @@
+{
+  "name": "minecraft-ai-squad",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A local, owner-controlled Minecraft AI squad",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test",
+    "check": "node --check src/index.js",
+    "acceptance:live": "node scripts/live_acceptance.js",
+    "smoke:live": "node scripts/live_smoke.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.6.1",
+    "mineflayer": "^4.39.0",
+    "mineflayer-pathfinder": "^2.4.5",
+    "mysql2": "^3.24.6",
+    "pino": "^9.9.4",
+    "zod": "^4.1.11"
+  }
+}

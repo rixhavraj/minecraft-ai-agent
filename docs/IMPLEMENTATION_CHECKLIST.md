@@ -1,0 +1,38 @@
+# Implementation checklist
+
+- [x] Audit repository structure, runtime, integrations, agents, skills, memory, configuration, and tests.
+- [x] Create evidence-based capability matrix.
+- [x] Add authoritative observation-only `PlayerStateController` foundation.
+- [x] Add persistent world observations and resource reservations to SQLite.
+- [x] Add skill versions, preconditions, cancellation, failure taxonomy, and statistics.
+- [x] Add observation-only villager discovery and Mineflayer trade inspection skills.
+- [x] Add Mineflayer-backed enchanting option inspection and verified item enchanting skills.
+- [x] Add observed portal discovery and verified dimension-transition skills.
+- [x] Add verified nearby animal breeding with species-specific food requirements.
+- [x] Add redstone component inspection and verified lever/button/plate activation.
+- [x] Add a compact lever-controlled lamp blueprint through the shared building engine.
+- [x] Add opt-in safety-gated autonomous idle scheduling through the central task executor.
+- [x] Audit latest master prompt against current role and capability architecture.
+- [x] Add typed episodic/semantic/procedural/strategic/failure/team memory APIs with verified-only retrieval.
+- [x] Add perception → verified-memory retrieval → planning → central execution → reflection cognitive loop.
+- [x] Add common OpenRouter, Ollama, and Hugging Face provider adapters with timeout/retry and usage metadata.
+- [x] Add inventory/equipment-gated Nether and End readiness assessments.
+- [x] Complete Telegram reporting commands for start, hunger, memory, learning, and history.
+- [x] Add SQLite-backed hierarchical long-term goals with dependencies, progress, and completion/failure conditions.
+- [x] Add optional local dashboard API exposing actual connection, player, task, agent, skill, and memory state.
+- [x] Add SQLite benchmark receipts that distinguish live and simulated runs and store measured metrics.
+- [x] Enforce conflicting resource reservation rejection across tasks.
+- [x] Add opt-in restart recovery that rehydrates nonterminal SQLite tasks into the central executor.
+- [x] Add persisted skill performance statistics, provider telemetry, and world-session snapshots.
+- [x] Add reproducible non-destructive live smoke command (`npm run smoke:live`) and verify real task completion.
+- [x] Add guarded live acceptance command (`npm run acceptance:live`) with empty-inventory preflight.
+- [x] Migrate exactly ten logical roles to the latest required role set: Commander, Strategist, Survival, Explorer, Miner, Crafter, Builder, Combat, Researcher, Memory.
+- [ ] Wire player state into task context, survival, Telegram status, and all agent reports.
+- [ ] Add persistent world identity, discoveries, resource ledger, and reservations.
+- [ ] Add gated new-player progression state machine.
+- [ ] Complete command coverage and structured command validation.
+- [x] Add provider adapters and persisted latency/token usage tracking.
+- [x] Add villager/trading, enchanting, redstone, transportation, and dimension controllers.
+- [x] Add restart-safe task recovery and autonomous idle scheduler.
+- [ ] Build reproducible world-reset integration tests and a live-world test harness.
+- [ ] Run and document the final acceptance scenario in a real Survival world with a prepared empty-inventory world. The current live preflight correctly rejected `oak_log x8` and `stick x2`.
