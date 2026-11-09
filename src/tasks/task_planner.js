@@ -200,60 +200,6 @@ export class TaskPlanner {
         else if (text.includes('redstone')) oreType = 'redstone'
         else if (text.includes('lapis')) oreType = 'lapis'
 
-        // Iron and higher ores require a pickaxe. Ensure a basic stone pickaxe
-        // can be made before the equip/mine steps run in a fresh world.
-        if (['iron', 'copper', 'gold', 'redstone', 'lapis', 'diamond'].includes(oreType)) {
-          subtasks.push({
-            id: 'step_gather_pickaxe_wood',
-            description: 'Gather wood for the first pickaxe',
-            skillId: 'collect_wood',
-            agent: 'Miner',
-            args: { woodType: 'oak', quantity: 4 },
-          })
-          subtasks.push({
-            id: 'step_craft_pickaxe_planks',
-            description: 'Craft planks for the first pickaxe',
-            skillId: 'craft_planks',
-            agent: 'Crafter',
-            args: { count: 2 },
-          })
-          subtasks.push({
-            id: 'step_craft_table',
-            description: 'Craft a crafting table for tool preparation',
-            skillId: 'craft_crafting_table',
-            agent: 'Crafter',
-            args: {},
-          })
-          subtasks.push({
-            id: 'step_place_table',
-            description: 'Place the crafting table for tool preparation',
-            skillId: 'place_crafting_table',
-            agent: 'Crafter',
-            args: {},
-          })
-          subtasks.push({
-            id: 'step_craft_wooden_pickaxe',
-            description: 'Craft a wooden pickaxe to mine stone',
-            skillId: 'craft_wooden_tools',
-            agent: 'Crafter',
-            args: { tool: 'wooden_pickaxe' },
-          })
-          subtasks.push({
-            id: 'step_gather_pickaxe_stone',
-            description: 'Gather cobblestone for a mining pickaxe',
-            skillId: 'collect_stone',
-            agent: 'Miner',
-            args: { quantity: 3 },
-          })
-          subtasks.push({
-            id: 'step_craft_pickaxe',
-            description: 'Craft a stone pickaxe before mining ore',
-            skillId: 'craft_stone_tools',
-            agent: 'Crafter',
-            args: { tool: 'stone_pickaxe' },
-          })
-        }
-
         subtasks.push({
           id: 'step_equip_tool',
           description: `Equip best tool for mining ${oreType}`,
@@ -304,18 +250,11 @@ export class TaskPlanner {
         })
       } else {
         subtasks.push({
-          id: 'step_search_food',
-          description: 'Scan inventory and surroundings for food',
-          skillId: 'find_food',
+          id: 'step_survive_food',
+          description: 'Find food using inventory, crops, animals, cooking, then eat',
+          skillId: 'survive_food',
           agent: 'Survival',
           args: { maxDistance: 32 },
-        })
-        subtasks.push({
-          id: 'step_harvest_or_consume',
-          description: 'Consume available food or harvest mature crops',
-          skillId: 'eat_food',
-          agent: 'Survival',
-          args: {},
         })
       }
     }
@@ -324,39 +263,6 @@ export class TaskPlanner {
     else if (text.startsWith('craft') || text.startsWith('make') || (text.startsWith('build') && /\b(axe|pickaxe|sword|shovel|hoe|tools?|table|chest|furnace|bed|shield|torch)\b/i.test(text))) {
       const itemName = text.replace(/^(craft|make|build|get)\s+(an?\s+)?/i, '').replace(/\s+/g, '_').trim()
 
-      // A crafting command must include its early-game material dependencies.
-      // Mineflayer correctly rejects recipes when these are absent; the planner
-      // should gather them before invoking craft_item instead of failing once.
-      if (itemName.includes('axe') || itemName.includes('pickaxe') || itemName.includes('sword') || itemName.includes('shovel') || itemName.includes('hoe')) {
-        subtasks.push({
-          id: 'step_gather_crafting_wood',
-          description: 'Gather wood needed for crafting materials',
-          skillId: 'collect_wood',
-          agent: 'Miner',
-          args: { woodType: 'oak', quantity: 4 },
-        })
-        subtasks.push({
-          id: 'step_craft_crafting_planks',
-          description: 'Convert gathered logs into planks',
-          skillId: 'craft_planks',
-          agent: 'Crafter',
-          args: { count: 2 },
-        })
-        subtasks.push({
-          id: 'step_craft_tool_table',
-          description: 'Craft a crafting table for equipment',
-          skillId: 'craft_crafting_table',
-          agent: 'Crafter',
-          args: {},
-        })
-        subtasks.push({
-          id: 'step_place_tool_table',
-          description: 'Place the crafting table for equipment',
-          skillId: 'place_crafting_table',
-          agent: 'Crafter',
-          args: {},
-        })
-      }
       subtasks.push({
         id: 'step_craft_equipment',
         description: `Craft ${itemName}`,

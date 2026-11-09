@@ -32,6 +32,9 @@ export const TASK_STATUS = {
   FAILED: 'failed',
   PAUSED: 'paused',
   CANCELLED: 'cancelled',
+  WAITING_FOR_INPUT: 'waiting_for_input',
+  WAITING_FOR_RESOURCES: 'waiting_for_resources',
+  BLOCKED: 'blocked',
 }
 
 export class AutonomousTaskExecutor extends EventEmitter {
@@ -65,7 +68,10 @@ export class AutonomousTaskExecutor extends EventEmitter {
 
   async recoverUnfinishedTasks() {
     if (this.activeTask || this.queue.length) return []
-    const recoverable = memoryStore.getRecentTasks(50).filter((task) => ['received', 'planning', 'execution', 'verification', 'paused'].includes(task.status))
+    // Paused tasks may be waiting for an owner answer or resources. They must
+    // not be requeued blindly after restart; only explicitly resumable states
+    // are recovered automatically.
+    const recoverable = memoryStore.getRecentTasks(50).filter((task) => ['received', 'planning', 'execution', 'verification'].includes(task.status) && !/WAITING_FOR_INPUT|WAITING_FOR_RESOURCES|BLOCKED/i.test(task.error ?? ''))
     const recovered = []
     for (const persisted of recoverable) {
       const taskItem = {
@@ -111,13 +117,37 @@ export class AutonomousTaskExecutor extends EventEmitter {
   /**
    * Submit a new instruction to the queue
    */
-  async submitCommand(instruction, priority = 0, issuerName = null) {
+  async submitCommand(instruction, priority = 0, issuerName = null, metadata = {}) {
     if (this.isEmergencyStopped) {
       throw new Error('System is in EMERGENCY STOP state. Clear stop before submitting tasks.')
     }
 
     const normalizedInstruction = String(instruction).trim().toLowerCase()
     const isAutonomous = ['Autonomy', 'CognitiveLoop', 'NPCBehaviour'].includes(issuerName)
+    const isOwnerCommand = !isAutonomous && issuerName !== 'Survival'
+
+    // An owner command has priority over ordinary work. Abort the current
+    // action through its existing cancellation signal, preserve its checkpoint,
+    // and let the new command enter the single executor queue immediately.
+    if (isOwnerCommand && this.activeTask) {
+      const interrupted = this.activeTask
+      interrupted.abortController?.abort()
+      interrupted.status = TASK_STATUS.PAUSED
+      memoryStore.updateTaskStatus(interrupted.id, TASK_STATUS.PAUSED, null, `INTERRUPTED_BY_OWNER: ${instruction}`)
+      this.notify(`[PAUSED] Task #${interrupted.id.slice(0, 8)} paused for your new instruction.`)
+      if (this.bot?.pathfinder) this.bot.pathfinder.setGoal(null)
+      this.activeTask = null
+    }
+
+    // Autonomous recovery/idle loops cannot recreate an unchanged blocked or
+    // failed objective. An explicit owner command is the only restart path.
+    if (isAutonomous) {
+      const previous = memoryStore.getRecentTasks(100).find((task) => task.instruction.trim().toLowerCase() === normalizedInstruction && ['failed', 'paused', 'cancelled'].includes(task.status) && /No food found|WAITING_FOR_INPUT|BLOCKED|MISSING_RESOURCE/i.test(`${task.error ?? ''}`))
+      if (previous) {
+        log.info({ instruction, previousTaskId: previous.id, status: previous.status }, 'Suppressed unchanged autonomous retry')
+        return { id: previous.id, status: 'suppressed_blocked', instruction, previousTaskId: previous.id }
+      }
+    }
     // Give an owner command a quiet window after completion so idle brains do
     // not immediately replace it with scan/inventory/routine work.
     if (!isAutonomous) this.ownerFocusUntil = Date.now() + 30_000
@@ -146,6 +176,7 @@ export class AutonomousTaskExecutor extends EventEmitter {
       errors: [],
       createdAt: Date.now(),
       abortController: new AbortController(),
+      nlpPlan: metadata.nlpPlan ?? null,
     }
 
     // Insert into priority queue
@@ -246,6 +277,7 @@ export class AutonomousTaskExecutor extends EventEmitter {
       task.status = TASK_STATUS.PLANNING
       memoryStore.updateTaskStatus(task.id, TASK_STATUS.PLANNING)
       task.plan = taskPlanner.plan(task.instruction, task.issuerName)
+      if (task.nlpPlan) memoryStore.recordTaskEvent(task.id, 'nlp:validated', { intent: task.nlpPlan.intent, objectives: task.nlpPlan.objectives, restrictions: task.nlpPlan.global_restrictions })
       this.notify(`[PLAN READY] Decomposed into ${task.plan.tasks.length} step(s) by Strategist.`)
       const decision = task.plan.tasks.map(step => `${step.agent || 'Commander'}:${step.skillId}`).join(' -> ')
       memoryStore.recordTaskEvent(task.id, 'decision:plan_selected', { decision, steps: task.plan.tasks })
@@ -280,9 +312,9 @@ export class AutonomousTaskExecutor extends EventEmitter {
         // 5. OBSERVING & EXECUTING SKILL
         let executionSuccess = false
         let retries = 0
-        const MAX_RETRIES = 2
+        let maxRetries = 2
 
-        while (!executionSuccess && retries <= MAX_RETRIES) {
+        while (!executionSuccess && retries <= maxRetries) {
           try {
             const result = await skillExecutor.execute(this.bot, step.skillId, step.args || {}, { maxRetries: 1, taskId: task.id, signal: task.abortController?.signal })
             if (result.success) {
@@ -294,7 +326,11 @@ export class AutonomousTaskExecutor extends EventEmitter {
               this.notify(`[VERIFIED] Step ${i + 1} completed successfully.`)
               task.status = TASK_STATUS.EXECUTING
             } else {
-              throw new Error(result.error || 'Skill execution failed')
+              const error = new Error(result.error || 'Skill execution failed')
+              error.code = result.failureClass || 'EXECUTION_FAILED'
+              maxRetries = ['NAVIGATION_TIMEOUT', 'NAVIGATION_STUCK', 'NAVIGATION_UNREACHABLE', 'NAVIGATION_VERIFICATION', 'TOOL_REQUIREMENT_FAILURE', 'MISSING_RESOURCE'].includes(error.code) ? 0 : 2
+              if (step.skillId === 'survive_food' && /No food found|no suitable food/i.test(error.message)) maxRetries = 0
+              throw error
             }
           } catch (err) {
             if (task.abortController?.signal.aborted || task.status === TASK_STATUS.CANCELLED || this.isEmergencyStopped) {
@@ -302,11 +338,16 @@ export class AutonomousTaskExecutor extends EventEmitter {
             }
             retries++
             log.warn({ err: err.message, step: step.id, retry: retries }, 'Step execution failed, initiating recovery lifecycle')
-            this.notify(`[RECOVERY] Step failed (${err.message}). Attempting retry ${retries}/${MAX_RETRIES}...`)
+            this.notify(maxRetries > 0 ? `[RECOVERY] Step failed (${err.message}). Attempting retry ${retries}/${maxRetries}...` : `[BLOCKED] Step failed (${err.message}). No identical retry will be attempted.`)
             await new Promise(r => setTimeout(r, 250))
 
-            if (retries > MAX_RETRIES) {
+            if (retries > maxRetries) {
               task.errors.push(`Step ${step.id} failed: ${err.message}`)
+              if (step.skillId === 'survive_food' && /No food found|no suitable food/i.test(err.message)) {
+                task.status = TASK_STATUS.PAUSED
+                memoryStore.updateTaskStatus(task.id, TASK_STATUS.PAUSED, task.results, `WAITING_FOR_INPUT: ${err.message}`)
+                this.notify(`[WAITING_FOR_INPUT] I could not find food. Task #${task.id.slice(0, 8)} is paused and will not restart until you instruct me.`)
+              }
               // Record failure lesson for future learning
               memoryStore.recordLesson('failure_recovery', `Task "${task.instruction}" failed at step ${step.skillId}: ${err.message}`, assignedAgent, task.id, 0)
               break
@@ -323,6 +364,8 @@ export class AutonomousTaskExecutor extends EventEmitter {
         memoryStore.recordLesson('successful_execution', `Completed "${task.instruction}" with ${task.results.length} steps`, 'Commander', task.id, 1)
         this.notify(`[OBJECTIVE COMPLETED] All steps of "${task.instruction}" succeeded!`)
         this.emit('task:terminal', { task, status: task.status })
+      } else if (task.status === TASK_STATUS.PAUSED) {
+        this.emit('task:terminal', { task, status: task.status, error: task.errors[0] })
       } else {
         task.status = TASK_STATUS.FAILED
         memoryStore.updateTaskStatus(task.id, TASK_STATUS.FAILED, task.results, task.errors.join('; '))

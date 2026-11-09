@@ -48,3 +48,8 @@ test('CommandDispatcher changes the live NPC profession', async () => {
   assert.match(reply, /assigned as a farmer/)
 })
 
+test('CommandDispatcher answers simple conversational questions without scheduling a task', async () => {
+  const response = await dispatchCommand('Do you understand my language', { bot: null })
+  assert.match(response, /^Yes\. I understand normal conversational language/)
+})
+

@@ -62,7 +62,7 @@ export class MinecraftSupervisor extends EventEmitter {
       return
     }
     const delay = Math.min(this.maxDelayMs, this.baseDelayMs * (2 ** Math.max(0, this.retryCount - 1)))
-    this.log.warn({ retryCount: this.retryCount, delay }, 'Minecraft disconnected; scheduling reconnect')
+    this.log.warn({ retryCount: this.retryCount, delay, pid: process.pid, username: this.config.username }, 'Minecraft disconnected; scheduling reconnect')
     this.emit('disconnect', { retryCount: this.retryCount, delay })
     this.timer = setTimeout(() => {
       this.timer = null

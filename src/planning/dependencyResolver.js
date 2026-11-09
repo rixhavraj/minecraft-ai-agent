@@ -1,0 +1,1 @@
+export function resolveDependencies(graph) { const ids=new Set(graph.nodes.map(n=>n.id)); return { ...graph, valid: graph.nodes.every(n=>n.dependencies.every(d=>ids.has(d))), order: graph.nodes.slice().sort((a,b)=>a.dependencies.length-b.dependencies.length).map(n=>n.id) } }

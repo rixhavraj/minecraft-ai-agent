@@ -29,12 +29,18 @@ skillRegistry.register({
   arguments: { radius: { type: 'number', required: false, default: 256 } },
   requires: [], permissions: ['*'], timeout: 90000,
   async execute(bot, args) {
+    const timeOfDay = bot.time?.timeOfDay ?? 0
+    const isNight = timeOfDay >= 12542 && timeOfDay <= 23459
+    if (!isNight && !bot.isRaining) return { success: false, error: 'not_sleep_time', state: { timeOfDay } }
     const beds = Object.entries(bot.registry?.blocksByName ?? {})
       .filter(([name]) => name.endsWith('_bed'))
       .map(([, block]) => block.id)
     const origin = bot.entity?.position
     const hostiles = Object.values(bot.entities ?? {}).filter((entity) => HOSTILE_MOBS.has(entity.name) && entity.position)
     const nearestThreat = hostiles.sort((a, b) => origin.distanceTo(a.position) - origin.distanceTo(b.position))[0]
+    if (nearestThreat && origin.distanceTo(nearestThreat.position) <= 10) {
+      return { success: false, error: 'hostile_near', state: { nearestHostile: nearestThreat.name, distance: origin.distanceTo(nearestThreat.position) } }
+    }
 
     // Escape first when a mob is already close; bed selection must never make
     // the bot stand still beside a creeper, zombie, or skeleton.
@@ -58,17 +64,44 @@ skillRegistry.register({
       .filter((candidate) => candidate.threatDistance > 8)
       .sort((a, b) => a.distance - b.distance)
     const selected = candidates[0]
-    if (!selected) return { success: false, error: 'No safe bed found nearby; escaped threats but cannot set spawn point.' }
+    if (!selected) return { success: false, error: 'no_bed', state: { searchedRadius: args.radius ?? 256, candidates: 0 } }
     const bedPosition = selected.position
     bot.pathfinder?.setGoal(new GoalNear(bedPosition.x, bedPosition.y, bedPosition.z, 2))
-    await new Promise(resolve => setTimeout(resolve, 1500))
+    const reached = await new Promise((resolve) => {
+      let settled = false
+      const finish = (value) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        bot.removeListener?.('goal_reached', onReached)
+        resolve(value)
+      }
+      const onReached = () => finish(true)
+      const timer = setTimeout(() => finish(false), 20_000)
+      bot.once?.('goal_reached', onReached)
+      if (!bot.pathfinder) finish(false)
+    })
+    if (!reached && bot.entity.position.distanceTo(bedPosition) > 3.5) {
+      bot.pathfinder?.setGoal(null)
+      return { success: false, error: 'bed_unreachable', state: { position: bot.entity.position, bedPosition } }
+    }
     const bedBlock = bot.blockAt(bedPosition)
-    if (!bedBlock || !bedBlock.name.endsWith('_bed')) return { success: false, error: 'Bed disappeared before arrival.' }
+    if (!bedBlock || !bedBlock.name.endsWith('_bed')) return { success: false, error: 'bed_unavailable', state: { position: bedPosition } }
     try {
+      await bot.lookAt?.(bedPosition.offset(0.5, 0.5, 0.5), true)
+      if (bot.entity.position.distanceTo(bedPosition) > 3.5) return { success: false, error: 'bed_too_far', state: { position: bot.entity.position } }
       await bot.sleep(bedBlock)
       return { success: true, slept: true, spawnPointVerified: true, position: bedPosition }
     } catch (error) {
-      return { success: false, error: `Could not sleep in bed: ${error.message}` }
+      log.warn({ error: error.message, bedPosition }, 'Bed interaction failed; trying activation fallback')
+      try {
+        await bot.activateBlock?.(bedBlock)
+        await new Promise(resolve => setTimeout(resolve, 2000))
+        if (bot.isSleeping) return { success: true, slept: true, spawnPointVerified: true, position: bedPosition, strategy: 'activateBlock' }
+      } catch (fallbackError) {
+        log.warn({ error: fallbackError.message, bedPosition }, 'Bed activation fallback failed')
+      }
+      return { success: false, error: `bed_interaction_failed: ${error.message}`, state: { position: bot.entity.position, bedPosition } }
     } finally {
       bot.pathfinder?.setGoal(null)
     }
@@ -209,6 +242,7 @@ skillRegistry.register({
   async execute(bot, args) {
     const fleeDist = args.fleeDistance ?? 24
     const pos = bot.entity.position
+    const start = { x: pos.x, y: pos.y, z: pos.z }
 
     // Find closest hostile
     let nearestHostile = null
@@ -238,13 +272,26 @@ skillRegistry.register({
 
     bot.setControlState('sprint', true)
     bot.pathfinder.setGoal(new GoalXZ(escapeVector.x, escapeVector.z))
-    await new Promise(r => setTimeout(r, 4000))
+    const reached = await new Promise((resolve) => {
+      let settled = false
+      const finish = (value) => { if (settled) return; settled = true; clearTimeout(timer); bot.removeListener?.('goal_reached', onReached); bot.removeListener?.('path_stop', onStopped); resolve(value) }
+      const onReached = () => finish(true)
+      const onStopped = () => finish(false)
+      const timer = setTimeout(() => finish(false), 10_000)
+      bot.once?.('goal_reached', onReached)
+      bot.once?.('path_stop', onStopped)
+    })
     bot.setControlState('sprint', false)
+    bot.pathfinder?.setGoal(null)
+    const final = bot.entity.position
+    const moved = Math.sqrt((final.x - start.x) ** 2 + (final.y - start.y) ** 2 + (final.z - start.z) ** 2)
+    if (!reached && moved < 4) return { success: false, error: 'escape_unverified', start, final: { x: final.x, y: final.y, z: final.z }, target: escapeVector }
 
     return {
       success: true,
       fledTo: escapeVector,
-      distanceFled: fleeDist,
+      distanceFled: moved,
+      verified: true,
     }
   },
 })

@@ -42,10 +42,18 @@ skillRegistry.register({
     const totalSlots = 36
     const occupiedSlots = bot.inventory.items().length
     const emptySlots = totalSlots - occupiedSlots
+    const aggregated = Object.values(items.reduce((groups, item) => {
+      const current = groups[item.name] ?? { name: item.name, count: 0, slots: 0 }
+      current.count += item.count
+      current.slots += 1
+      groups[item.name] = current
+      return groups
+    }, {})).sort((a, b) => a.name.localeCompare(b.name))
 
     return {
       success: true,
       items,
+      aggregated,
       totalItems: items.reduce((acc, i) => acc + i.count, 0),
       emptySlots,
       isFull: emptySlots === 0,
